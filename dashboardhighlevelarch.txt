@@ -1,0 +1,40 @@
+@startuml
+
+' High-Level Architecture Diagram for ThingsBoard Dashboard System
+
+node "User Device" {
+    component "Web Browser" as Browser
+}
+
+node "ThingsBoard Server" {
+    component "API Gateway" as APIGateway
+    component "Dashboard Service" as DashboardService
+    component "Security Service" as SecurityService
+    component "Widget Framework" as WidgetFramework
+}
+
+node "Data Layer" {
+    database "PostgreSQL" as PostgreSQLDB
+    database "Cassandra" as CassandraDB
+    component "Redis Cache" as RedisCache
+}
+
+node "Widget System" {
+    component "Widget Container" as WidgetContainer
+    component "Widget Configurator" as WidgetConfigurator
+    component "Widget Renderer" as WidgetRenderer
+}
+
+Browser --> APIGateway: User Requests
+APIGateway --> SecurityService: Authentication
+APIGateway --> DashboardService: Process Dashboard Request
+DashboardService --> PostgreSQLDB: Fetch/Store Data
+DashboardService --> CassandraDB: Fetch/Store Data
+DashboardService --> RedisCache: Cache Data
+DashboardService --> WidgetFramework: Load Widgets
+
+WidgetFramework --> WidgetContainer: Manage Widgets
+WidgetContainer --> WidgetRenderer: Render Widgets
+WidgetContainer --> WidgetConfigurator: Configure Widgets
+
+@enduml

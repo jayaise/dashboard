@@ -1,0 +1,112 @@
+@startuml
+
+' Consolidated architecture diagram combining components, classes, sequence, and deployment
+
+actor User
+participant "Web Browser" as UI
+participant "API Gateway" as API
+participant "Dashboard Service" as DS
+participant "Cache Server" as Cache
+participant "PostgreSQL" as DB
+participant "Cassandra" as CassandraDB
+participant "Security Service" as Security
+
+User -> UI: Request Dashboard
+UI -> API: HTTPS API Call (GET /dashboard/{id})
+API -> Cache: Check if cached
+
+alt Cache Hit
+    Cache -> API: Return Cached Data
+    API -> UI: Send Dashboard Data
+else Cache Miss
+    API -> DS: Fetch Dashboard Data
+    DS -> DB: Query PostgreSQL
+    DS -> CassandraDB: Query Cassandra
+    DB -> DS: Return Data
+    CassandraDB -> DS: Return Data
+    DS -> Cache: Store in Cache
+    DS -> API: Send Data
+    API -> UI: Send Dashboard Data
+end
+
+User -> UI: Modify Dashboard
+UI -> API: API Call (POST /dashboard/update)
+API -> DS: Update Dashboard
+DS -> DB: Save Changes
+DS -> CassandraDB: Save Changes
+DS -> Cache: Update Cache
+API -> UI: Confirm Update
+
+UI -> API: Auth Request
+API -> Security: Authenticate User
+Security -> API: Auth Success/Failure
+API -> UI: Return Auth Status
+
+
+' Deployment Structure
+node "User Device" {
+    component "Web Browser" as Browser
+}
+
+node "ThingsBoard Server" {
+    component "Dashboard Service" as DashboardService
+    component "API Gateway" as APIGateway
+    component "Security Service" as SecurityService
+    component "Widget Framework" as WidgetFramework
+}
+
+node "Database Cluster" {
+    database "PostgreSQL" as PostgreSQLDB
+    database "Cassandra" as CassandraDB
+}
+
+node "Cache Layer" {
+    component "Redis" as RedisCache
+}
+
+node "Widget System" {
+    component "Widget Container" as WidgetContainer
+    component "Widget Configurator" as WidgetConfigurator
+    component "Widget Renderer" as WidgetRenderer
+}
+
+WidgetContainer --> WidgetRenderer: Render Widgets
+WidgetConfigurator --> WidgetContainer: Configure Widget
+
+Browser --> APIGateway: HTTPS Request
+APIGateway --> DashboardService: Process Request
+DashboardService --> PostgreSQLDB: Fetch/Store Data
+DashboardService --> CassandraDB: Fetch/Store Data
+DashboardService --> RedisCache: Cache Dashboard Data
+DashboardService --> WidgetFramework: Load Widgets
+APIGateway --> SecurityService: Authenticate User
+
+
+' Class Diagram for Widget Framework
+class WidgetContainer {
+    +renderWidget(widgetId: string)
+    +updateWidgetConfig(config: object)
+}
+
+class WidgetRenderer {
+    +loadWidget(widgetId: string)
+    +render()
+}
+
+class WidgetConfigurator {
+    +openConfigPanel(widgetId: string)
+    +saveConfig(config: object)
+}
+
+class WidgetService {
+    +getWidgetData(widgetId: string)
+    +saveWidgetState(state: object)
+}
+
+WidgetContainer --> WidgetRenderer
+WidgetContainer --> WidgetConfigurator
+WidgetContainer --> WidgetService
+WidgetRenderer --> WidgetService
+WidgetConfigurator --> WidgetService
+
+@enduml
