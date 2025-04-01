@@ -1,0 +1,51 @@
+@startuml
+actor User
+participant "Dashboard UI" as UI
+participant "Dashboard Manager" as DashboardManager
+participant "Configuration" as Config
+participant "Themes & Layout" as ThemesLayout
+participant "Widget Manager" as WidgetManager
+participant "Widget Container" as WidgetContainer
+participant "Widget Groups" as WidgetGroups
+participant "Widget Types" as WidgetTypes
+participant "Data Handler" as DataHandler
+participant "UI Caching" as UICache
+participant "API Management" as APIManager
+
+User -> UI: Open Dashboard
+UI -> DashboardManager: Load Dashboard
+DashboardManager -> Config: Fetch Dashboard Config
+Config -> ThemesLayout: Apply Themes & Layout
+ThemesLayout -> UI: Update Dashboard UI
+
+User -> UI: Add Widget
+UI -> WidgetManager: Create New Widget
+WidgetManager -> WidgetTypes: Select Widget Type
+WidgetTypes -> WidgetGroups: Assign to Group
+WidgetManager -> WidgetContainer: Add to Container
+WidgetContainer -> UI: Render Widget
+
+User -> UI: Fetch Widget Data
+UI -> DataHandler: Request Widget Data
+DataHandler -> UICache: Check Cached Data
+
+alt Cache Hit
+    UICache -> DataHandler: Return Cached Data
+else Cache Miss
+    DataHandler -> APIManager: Request Data from Backend
+    APIManager -> DataHandler: Return API Response
+    DataHandler -> UICache: Cache Data
+end
+DataHandler -> UI: Return Data
+
+User -> UI: Change Theme/Layout
+UI -> ThemesLayout: Update Theme/Layout
+ThemesLayout -> UI: Apply Changes
+
+User -> UI: Save Dashboard Config
+UI -> Config: Update Dashboard Config
+Config -> APIManager: Save Config to Backend
+APIManager -> Config: Confirm Update
+Config -> UI: Confirm Save Success
+
+@enduml
