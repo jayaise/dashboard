@@ -1,0 +1,128 @@
+@startuml
+title Dashboard System Component Diagram
+
+' Components
+component "Dashboard UI" as UI
+component "Dashboard Service" as DashboardService
+component "API Gateway" as APIGateway
+component "Cache Layer" as Cache
+component "Database" as DB
+component "Widget Library" as WidgetLib
+component "Security Service" as Security
+
+' UI Caching Layer
+component "UI Cache" as UICache
+
+' Relationships
+UI --> UICache : Fetch Cached Dashboard Data
+UICache --> UI : Return Cached Data
+
+UI --> APIGateway : Request Dashboard Data
+APIGateway --> Cache : Check Cache
+Cache --> APIGateway : Cache Hit -> Return Data
+APIGateway --> DashboardService : Cache Miss -> Fetch from DB
+DashboardService --> DB : Query Data
+DB --> DashboardService : Return Data
+DashboardService --> Cache : Store in Cache
+DashboardService --> APIGateway : Return Data
+APIGateway --> UI : Send Dashboard Data
+
+UI --> WidgetLib : Load Widgets
+WidgetLib --> UI : Render Widgets
+
+UI --> Security : Authenticate User
+Security --> UI : Return Auth Status
+
+@enduml
+
+
+
+@startuml
+title Dashboard System - Data Flow Diagram (DFD)
+
+' External Entities
+actor User
+
+' Processes
+rectangle "Dashboard UI" as UI
+rectangle "API Gateway" as APIGateway
+rectangle "Dashboard Service" as DashboardService
+rectangle "Security Service" as Security
+rectangle "Widget Library" as WidgetLib
+
+' Data Stores
+database "UI Cache" as UICache
+database "Backend Cache" as BackendCache
+database "Database" as DB
+
+' Data Flow
+User --> UI : Request Dashboard
+UI --> UICache : Check Cache
+UICache --> UI : Return Cached Data
+UI --> APIGateway : Request Data
+
+APIGateway --> BackendCache : Check Cache
+BackendCache --> APIGateway : Return Cached Data
+
+APIGateway --> DashboardService : Fetch Dashboard Data
+DashboardService --> DB : Query Data
+DB --> DashboardService : Return Data
+
+DashboardService --> BackendCache : Store in Cache
+DashboardService --> APIGateway : Return Data
+APIGateway --> UI : Send Dashboard Data
+UI --> UICache : Store in UI Cache
+
+User --> UI : Interact with Widgets
+UI --> WidgetLib : Load Widget Components
+
+User --> UI : Authenticate
+UI --> Security : Validate Credentials
+Security --> UI : Auth Success/Failure
+
+@enduml
+
+@startuml
+
+package "Client Layer" {
+    [User]
+    component "Dashboard UI" as UI
+    component "UI Cache (Local Storage)" as UICache
+}
+
+package "Backend" {
+    component "API Gateway" as APIGateway
+    component "Dashboard Service" as DashboardService
+    component "Redis Cache" as Cache
+}
+
+package "Database Layer" {
+    database "PostgreSQL (Metadata)" as PostgreSQLDB
+    database "Cassandra (Time-series Data)" as CassandraDB
+}
+
+User --> UI : Requests Dashboard
+UI --> UICache : Check Local Storage Cache
+
+alt UI Cache Hit
+    UICache --> UI : Return Cached Data
+else UI Cache Miss
+    UI -> APIGateway : Fetch Dashboard Data
+    APIGateway -> Cache : Check Redis Cache
+
+    alt Backend Cache Hit
+        Cache --> APIGateway : Return Cached Data
+        APIGateway --> UI : Send Data
+    else Backend Cache Miss
+        APIGateway -> DashboardService : Process Request
+        DashboardService -> PostgreSQLDB : Fetch Metadata
+        DashboardService -> CassandraDB : Fetch Time-series Data
+        PostgreSQLDB --> DashboardService : Return Metadata
+        CassandraDB --> DashboardService : Return Data
+        DashboardService -> Cache : Store in Redis Cache
+        DashboardService -> APIGateway : Send Data
+        APIGateway -> UI : Send Data
+    end
+end
+
+@enduml
