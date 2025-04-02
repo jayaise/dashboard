@@ -1,0 +1,64 @@
+
+@startuml
+title Dashboard Content-Based Management System - ERD
+
+entity users {
+  *id : UUID
+  --
+  username : string
+  password_hash : string
+  role_id : UUID
+}
+
+entity roles {
+  *id : UUID
+  --
+  name : string
+}
+
+entity dashboards {
+  *id : UUID
+  --
+  title : string
+  layout_json : text
+  user_id : UUID
+  created_at : datetime
+}
+
+entity widgets {
+  *id : UUID
+  --
+  dashboard_id : UUID
+  type_id : UUID
+  config_json : text
+  x : int
+  y : int
+  width : int
+  height : int
+}
+
+entity widget_types {
+  *id : UUID
+  --
+  name : string
+  description : text
+  default_config_json : text
+  thumbnail_url : string
+}
+
+entity assets {
+  *id : UUID
+  --
+  file_url : string
+  file_type : string
+  owner_id : UUID
+  created_at : datetime
+}
+
+users ||--o{ dashboards : owns
+users }o--|| roles : has
+dashboards ||--o{ widgets : contains
+widget_types ||--o{ widgets : typed_as
+users ||--o{ assets : uploads
+
+@enduml

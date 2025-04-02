@@ -1,0 +1,46 @@
+@startuml
+title Sequence Diagram - Widget Upload and Dashboard Management
+
+actor User
+participant "Access Control Service" as Access
+participant "Dashboard Service" as Dashboard
+participant "Widget Service" as Widget
+participant "Cloud Storage Service" as Storage
+participant "Cloud Provider Service" as Provider
+participant "Redis Cache" as Cache
+
+== Authentication ==
+User -> Access: Login
+Access -> Access: Validate credentials
+Access --> User: JWT Token
+
+== Load Dashboard ==
+User -> Dashboard: GET /dashboard (with JWT)
+Dashboard -> Access: Validate token
+Access --> Dashboard: OK
+Dashboard -> Cache: Check dashboard layout cache
+alt Cache Hit
+    Cache --> Dashboard: Cached layout
+else Cache Miss
+    Dashboard -> Widget: Get widget list
+    Widget -> Cache: Check widget cache
+    Widget -> Storage: Fetch widget assets
+    Storage -> Provider: Get tenant cloud config
+    Provider --> Storage: Config
+    Storage --> Widget: Asset URL
+    Widget --> Dashboard: Widget layout
+    Dashboard -> Cache: Store dashboard layout
+end
+Dashboard --> User: Rendered Dashboard
+
+== Upload Widget Asset ==
+User -> Widget: Upload widget (file + config)
+Widget -> Access: Validate JWT
+Access --> Widget: OK
+Widget -> Storage: Upload file (image/data)
+Storage -> Provider: Get cloud config
+Provider --> Storage: S3/MinIO/Azure/GCS creds
+Storage --> Widget: File uploaded URL
+Widget -> Cache: Invalidate/refresh widget cache
+Widget --> User: Widget uploaded
+@enduml

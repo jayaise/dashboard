@@ -1,0 +1,36 @@
+@startuml
+title Data Flow Diagram - Combined Services
+
+actor User
+rectangle "Access Control Service" as Access
+rectangle "Dashboard Service" as Dashboard
+rectangle "Widget Service" as Widget
+rectangle "Cloud Storage Service" as Storage
+rectangle "Cloud Provider Service" as Provider
+database "Redis Cache" as Cache
+database "PostgreSQL / DB" as DB
+
+User --> Access: Auth Request
+Access --> DB: User lookup
+Access --> User: Token
+
+User --> Dashboard: View Dashboard
+Dashboard --> Cache: Check Layout
+Dashboard --> DB: Fetch Layout (if cache miss)
+Dashboard --> Widget: Request Widgets
+Widget --> Cache: Check Widget Config
+Widget --> DB: Fetch Config (if cache miss)
+Widget --> Storage: Get Widget Files
+Storage --> Provider: Get Cloud Config
+Provider --> DB: Tenant Cloud Info
+Storage --> Cloud: Upload/Fetch File
+Widget --> Cache: Cache Widget
+Dashboard --> Cache: Cache Layout
+Dashboard --> User: Dashboard View
+
+User --> Widget: Upload New Widget
+Widget --> Storage: Upload File
+Storage --> Provider: Get Cloud Info
+Storage --> Cloud: Upload File
+Widget --> DB: Save Widget Info
+@enduml

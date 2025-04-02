@@ -1,0 +1,72 @@
+
+openapi: 3.0.3
+info:
+  title: ThingsBoard Dashboard API
+  version: 1.0.0
+  description: API for managing dashboards, widgets, and themes in ThingsBoard
+paths:
+  /api/dashboard:
+    post:
+      summary: Create or update a dashboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Dashboard'
+      responses:
+        '200':
+          description: Dashboard created or updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+
+  /api/dashboard/{id}:
+    get:
+      summary: Get dashboard by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dashboard found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+
+    delete:
+      summary: Delete dashboard by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Dashboard deleted
+
+components:
+  schemas:
+    Dashboard:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        themeId:
+          type: string
+          format: uuid
+        createdTime:
+          type: string
+          format: date-time
