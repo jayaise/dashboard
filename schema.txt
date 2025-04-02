@@ -1,0 +1,112 @@
+@startuml
+title ThingsBoard Dashboard & Widget Schema
+
+entity Tenant {
+  * id : UUID <<PK>>
+  --
+  name : String
+  created_time : Timestamp
+}
+
+entity Dashboard {
+  * id : UUID <<PK>>
+  --
+  tenant_id : UUID <<FK>>
+  title : String
+  theme_id : UUID <<FK>>
+  created_time : Timestamp
+}
+
+entity DashboardConfiguration {
+  * id : UUID <<PK>>
+  --
+  dashboard_id : UUID <<FK>>
+  settings : JSON
+  layout_id : UUID <<FK>>
+}
+
+entity DashboardThemes {
+  * id : UUID <<PK>>
+  --
+  tenant_id : UUID <<FK>>
+  name : String
+  config : JSON
+}
+
+entity DashboardLayouts {
+  * id : UUID <<PK>>
+  --
+  name : String
+  structure : JSON
+}
+
+entity WidgetBundle {
+  * id : UUID <<PK>>
+  --
+  tenant_id : UUID <<FK>>
+  alias : String
+  title : String
+  created_time : Timestamp
+}
+
+entity WidgetType {
+  * id : UUID <<PK>>
+  --
+  bundle_id : UUID <<FK>>
+  alias : String
+  name : String
+  type : String
+  descriptor : JSON
+  preview_image : TEXT
+}
+
+entity WidgetTemplate {
+  * id : UUID <<PK>>
+  --
+  widget_type_id : UUID <<FK>>
+  name : String
+  default_config : JSON
+}
+
+entity Dashboard_Widget_Mapping {
+  * id : UUID <<PK>>
+  --
+  dashboard_id : UUID <<FK>>
+  widget_type_id : UUID <<FK>>
+  pos_x : INT
+  pos_y : INT
+  width : INT
+  height : INT
+  config : JSON
+}
+
+entity Dashboard_User_Mapping {
+  * dashboard_id : UUID <<FK>>
+  * user_id : UUID <<FK>>
+}
+
+entity Dashboard_Roles_Permission {
+  * id : UUID <<PK>>
+  --
+  dashboard_id : UUID <<FK>>
+  role : String
+  permissions : JSON
+}
+
+' Relationships
+DashboardConfiguration --> Dashboard
+Dashboard --> Tenant
+Dashboard --> DashboardThemes
+DashboardConfiguration --> DashboardLayouts
+
+WidgetType --> WidgetBundle
+WidgetTemplate --> WidgetType
+WidgetBundle --> Tenant
+
+Dashboard_Widget_Mapping --> Dashboard
+Dashboard_Widget_Mapping --> WidgetType
+
+Dashboard_User_Mapping --> Dashboard
+Dashboard_Roles_Permission --> Dashboard
+
+@enduml
