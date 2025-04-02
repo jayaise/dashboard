@@ -1,0 +1,59 @@
+
+@startuml
+title ThingsBoard Dashboard System - Full Architecture
+
+' External layers
+actor User
+database PostgreSQL
+cloud Cassandra
+node Redis
+rectangle "WebSocket Broker" as WebSocket
+package "ThingsBoard UI (Angular/React)" {
+  component DashboardPage
+  component WidgetViewer
+  component ThemeManager
+}
+
+' Backend service structure
+package "ThingsBoard Server (Spring Boot)" {
+  component DashboardController
+  component TbDashboardService
+  component DashboardServiceImpl
+  component DashboardDao
+  component DashboardRepository
+  component WidgetService
+  component WidgetDao
+  component WidgetRepository
+  component ThemeService
+  component DashboardSyncService
+  component EdgeSyncService
+  component ApiUsageService
+}
+
+' Relationships: UI
+User --> DashboardPage
+DashboardPage --> DashboardController
+WidgetViewer --> WidgetService
+ThemeManager --> ThemeService
+
+' Relationships: backend flow
+DashboardController --> TbDashboardService
+TbDashboardService --> DashboardServiceImpl
+DashboardServiceImpl --> DashboardDao
+DashboardDao --> DashboardRepository
+DashboardServiceImpl --> Dashboard
+DashboardServiceImpl --> WidgetService
+WidgetService --> WidgetDao
+WidgetDao --> WidgetRepository
+DashboardServiceImpl --> ThemeService
+DashboardServiceImpl --> ApiUsageService
+
+' DB interactions
+DashboardRepository --> PostgreSQL
+WidgetRepository --> PostgreSQL
+ThemeService --> PostgreSQL
+ApiUsageService --> PostgreSQL
+DashboardSyncService --> Redis
+EdgeSyncService --> Cassandra
+
+@enduml

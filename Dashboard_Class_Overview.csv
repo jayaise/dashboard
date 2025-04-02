@@ -1,0 +1,34 @@
+Class Name,Description
+Dashboard.java,Core dashboard model/entity class.
+DashboardController.java,REST controller for dashboard API.
+DashboardControllerTest.java,JUnit test for DashboardController.
+DashboardDao.java,DAO interface or class for dashboards.
+DashboardDataValidator.java,Validates dashboard data before saving.
+DashboardDataValidatorTest.java,Test class for DashboardDataValidator.
+DashboardEdgeProcessor.java,Processes edge synchronization for dashboards.
+DashboardEdgeTest.java,Tests dashboard behavior in edge deployments.
+DashboardEntity.java,JPA entity for database mapping.
+DashboardExportService.java,Service to export dashboards to JSON or file.
+DashboardFields.java,Static field constants for dashboards.
+DashboardId.java,Typed UUID wrapper for dashboard IDs.
+DashboardImportService.java,Service to import dashboards from JSON/file.
+DashboardInfo.java,Lightweight DTO with summary of dashboard.
+DashboardInfoDao.java,DAO for dashboard info queries.
+DashboardInfoEntity.java,Entity representing dashboard info.
+DashboardInfoRepository.java,Spring Data JPA repository for DashboardInfo.
+DashboardPage.java,Paginated dashboard DTO.
+DashboardPageElements.java,Helper for pagination elements.
+DashboardPageHelper.java,Utility to build dashboard pages.
+DashboardProcessor.java,Business logic for dashboard processing.
+DashboardRepository.java,Main JPA repository interface.
+DashboardService.java,Interface defining dashboard service methods.
+DashboardServiceImpl.java,Concrete implementation of DashboardService.
+DashboardServiceTest.java,Test class for DashboardServiceImpl.
+DashboardSyncService.java,Service to sync dashboards across edge/cloud.
+DashboardSyncServiceTest.java,JUnit test for DashboardSyncService.
+DashboardTitleEvictEvent.java,Event to evict cached dashboard titles.
+DashboardTitlesCaffeineCache.java,Caffeine cache for dashboard titles.
+DashboardTitlesRedisCache.java,Redis cache implementation for dashboard titles.
+DashboardUpdateMsg.java,Protobuf or DTO class for dashboard updates.
+DashboardUpdateMsgOrBuilder.java,Helper for protobuf or gRPC dashboard updates.
+DashboardsEdgeEventFetcher.java,Edge event fetcher specific to dashboards.
