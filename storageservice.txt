@@ -1,0 +1,190 @@
+@startuml
+
+interface CloudStorageService {
+    +uploadFile(path: String, content: byte[], config: CloudProviderConfig): String
+    +downloadFile(path: String, config: CloudProviderConfig): byte[]
+    +deleteFile(path: String, config: CloudProviderConfig): void
+}
+
+class S3StorageService implements CloudStorageService
+class AzureBlobStorageService implements CloudStorageService
+class GCPStorageService implements CloudStorageService
+class MinIOStorageService implements CloudStorageService
+
+class CloudProviderConfig {
+    -provider: String
+    -accessKey: String
+    -secretKey: String
+    -region: String
+    -bucket: String
+    -endpoint: String
+}
+
+class CloudStorageFactory {
+    +getService(providerType: String): CloudStorageService
+}
+
+class FileController {
+    +upload(tenantId: UUID, file: MultipartFile): ResponseEntity<String>
+}
+
+CloudStorageService <|.. S3StorageService
+CloudStorageService <|.. AzureBlobStorageService
+CloudStorageService <|.. GCPStorageService
+CloudStorageService <|.. MinIOStorageService
+
+CloudStorageFactory --> S3StorageService
+CloudStorageFactory --> AzureBlobStorageService
+CloudStorageFactory --> GCPStorageService
+CloudStorageFactory --> MinIOStorageService
+
+CloudStorageFactory --> CloudProviderConfig
+FileController --> CloudStorageFactory
+FileController --> CloudStorageService : uses
+
+@enduml
+
+
+@startuml
+interface CloudStorageService {
+    +uploadFile(path: String, content: byte[], config: CloudProviderConfig): String
+    +downloadFile(path: String, config: CloudProviderConfig): byte[]
+    +deleteFile(path: String, config: CloudProviderConfig): void
+}
+
+class CloudProviderConfig {
+    -provider: String
+    -accessKey: String
+    -secretKey: String
+    -region: String
+    -bucket: String
+    -endpoint: String
+}
+
+class S3StorageService implements CloudStorageService
+class AzureBlobStorageService implements CloudStorageService
+class GCPStorageService implements CloudStorageService
+class MinIOStorageService implements CloudStorageService
+
+class CloudStorageFactory {
+    +getService(providerType: String): CloudStorageService
+}
+
+class FileController {
+    +upload(tenantId: UUID, file: MultipartFile): ResponseEntity<String>
+}
+
+CloudStorageService <|.. S3StorageService
+CloudStorageService <|.. AzureBlobStorageService
+CloudStorageService <|.. GCPStorageService
+CloudStorageService <|.. MinIOStorageService
+
+CloudStorageFactory --> S3StorageService
+CloudStorageFactory --> AzureBlobStorageService
+CloudStorageFactory --> GCPStorageService
+CloudStorageFactory --> MinIOStorageService
+CloudStorageFactory --> CloudProviderConfig
+
+FileController --> CloudStorageFactory : uses
+FileController --> CloudStorageService : uses
+@enduml
+
+
+@startuml
+actor User
+participant FileController
+participant CloudStorageFactory
+participant CloudStorageService
+participant CloudProviderConfig
+
+User -> FileController : POST /upload (tenantId, file)
+FileController -> CloudProviderConfig : Load from DB
+FileController -> CloudStorageFactory : getService(providerType)
+CloudStorageFactory -> CloudStorageService : return selected provider
+
+FileController -> CloudStorageService : uploadFile(path, content, config)
+CloudStorageService --> FileController : return fileUrl
+
+FileController --> User : 200 OK + fileUrl
+@enduml
+
+
+@startuml
+actor User
+participant FileController
+participant CloudStorageFactory
+participant CloudStorageService
+participant CloudProviderConfig
+
+User -> FileController : upload(tenantId, file)
+
+FileController -> CloudProviderConfig : loadFromDB(tenantId)
+CloudProviderConfig --> FileController : config
+
+FileController -> CloudStorageFactory : getService(config.provider)
+CloudStorageFactory --> FileController : CloudStorageService
+
+FileController -> CloudStorageService : uploadFile(path, content, config)
+CloudStorageService --> FileController : fileUrl
+
+FileController --> User : return fileUrl
+@enduml
+
+@startuml
+actor User
+rectangle "React UI / Postman" as UI
+rectangle "FileController\n(Spring Boot)" as Controller
+rectangle "CloudStorageFactory" as Factory
+database "CloudProvider DB\n(bucket, key, region)" as DB
+
+package "Cloud Provider Services" {
+    rectangle "S3StorageService"
+    rectangle "AzureBlobStorageService"
+    rectangle "GCPStorageService"
+    rectangle "MinIOStorageService"
+}
+
+UI --> Controller : Upload File (POST /upload?tenantId=...)
+Controller --> DB : Load tenant cloud config
+Controller --> Factory : getService(provider)
+Factory --> S3StorageService : return bean
+Controller --> S3StorageService : uploadFile(path, bytes, config)
+S3StorageService --> "S3 Bucket\n(AWS)" : Upload
+"S3 Bucket\n(AWS)" --> S3StorageService : OK
+S3StorageService --> Controller : fileUrl
+Controller --> UI : 200 OK + fileUrl
+@enduml
+
+@startuml
+actor User
+rectangle "React UI / Postman" as UI
+rectangle "FileController" as Controller
+rectangle "CloudStorageFactory"
+rectangle "CloudProviderConfig"
+package "Cloud Provider Services" {
+  rectangle "S3StorageService"
+  rectangle "AzureBlobStorageService"
+  rectangle "GCPStorageService"
+  rectangle "MinIOStorageService"
+}
+database "DB (provider config)" as DB
+cloud "Cloud Buckets\nS3 / Azure / GCP / MinIO" as Cloud
+
+User --> UI : Upload File
+UI --> Controller : POST /upload?tenantId
+
+Controller --> DB : fetch config by tenantId
+DB --> Controller : CloudProviderConfig
+
+Controller --> CloudStorageFactory : getService(config.provider)
+CloudStorageFactory --> S3StorageService
+CloudStorageFactory --> AzureBlobStorageService
+CloudStorageFactory --> GCPStorageService
+CloudStorageFactory --> MinIOStorageService
+
+Controller --> S3StorageService : uploadFile(file, config)
+S3StorageService --> Cloud : upload
+Cloud --> S3StorageService : 200 OK
+S3StorageService --> Controller : fileUrl
+Controller --> UI : return fileUrl
+@enduml
