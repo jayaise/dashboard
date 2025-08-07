@@ -1,0 +1,30 @@
+@startuml Device_Status_Update_Sequence
+
+actor Device
+participant "Kong Gateway" as Kong
+participant "Gateway-Service" as Gateway
+participant "Scheduler (cron)" as Cron
+participant "Heartbeat Service" as Heartbeat
+database "Device DB" as DB
+
+== Device Sends Status ==
+Device -> Kong : POST /api/device/status
+Kong -> Gateway : Forward request
+Gateway -> Device : 200 OK
+Gateway -> DB : Update device_status to "online"
+Gateway -> DB : Insert protocol/service history
+
+== Scheduler Check (every 5 minutes) ==
+Cron -> DB : Query devices where updated_time > 5 min ago
+loop Each stale device
+  Cron -> Gateway : Trigger heartbeat check
+  Gateway -> Heartbeat : GET /api/heartbeat/{deviceId}
+  Heartbeat --> Gateway : Response (fail or timeout)
+
+  alt Heartbeat check failed
+    Gateway -> DB : Set device_status = "offline"
+    Gateway -> DB : Insert protocol/service history (offline)
+  end
+end
+
+@enduml
