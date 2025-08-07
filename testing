@@ -1,0 +1,57 @@
+@startuml Device Status Update Sequence (Updated)
+
+actor Device
+participant "Kong Gateway" as Kong
+participant "Gateway-Service" as Gateway
+database "Device DB" as DB
+participant "Heartbeat Service" as Heartbeat
+participant "Scheduler" as Cron
+
+== Device Sends Status ==
+Device -> Kong : POST /api/device/status
+Kong -> Gateway : Forward request
+Gateway -> Device : 200 OK
+Gateway -> DB : Set device_status = online
+Gateway -> DB : Insert service/protocol history
+
+== Scheduled Check (every 5 minutes) ==
+Cron -> DB : Get devices where\nupdated_time < now() - 5 min
+loop For each stale device
+  Cron -> Gateway : Initiate Heartbeat Check
+  Gateway -> Heartbeat : GET /api/heartbeat/{deviceId}
+  Heartbeat --> Gateway : (Fail or Timeout)
+
+  alt Heartbeat Failed
+    Gateway -> DB : Set device_status = offline
+    Gateway -> DB : Insert into device_history (offline)
+  end
+end
+
+@enduml
+
+
+@startuml Device Cloud Gateway Architecture (Updated)
+
+actor "IoT Device" as Device
+node "Kong API Gateway" as Kong
+node "Cloud Gateway-Service" as GatewayService
+database "Device DB" as DeviceDB
+node "Heartbeat Service" as HeartbeatSvc
+component "Scheduler (cron)" as Scheduler
+
+Device --> Kong : POST /api/device/status
+Kong --> GatewayService : Forward request
+GatewayService --> Device : 200 OK (Immediate Response)
+GatewayService --> DeviceDB : Update device_status (Online)\nInsert service/protocol history
+
+Scheduler --> DeviceDB : Query device_status\nWHERE updated_time > now() - 5min
+Scheduler --> GatewayService : For each device, call heartbeat
+GatewayService --> HeartbeatSvc : GET /api/heartbeat/{deviceId}
+HeartbeatSvc --> GatewayService : Response (Success/Fail)
+
+alt Heartbeat FAIL
+  GatewayService --> DeviceDB : Update device_status = Offline
+  GatewayService --> DeviceDB : Insert into device_history (Offline)
+end
+
+@enduml
