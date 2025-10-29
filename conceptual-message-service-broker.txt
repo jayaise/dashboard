@@ -1,0 +1,154 @@
+@startuml
+title AMQP 1.0 + Entra ID Auth: Device → Middleware → Azure Service Bus (Topic)
+
+actor Device
+box "Middleware Service" #LightBlue
+  participant "AMQP Listener\n(Qpid Apache Broker)" as Qpid
+  participant "ServiceBusAuth\n(Entra ID / Managed Identity)" as SBAuth
+  participant "Router\n(Qpid → SB Topic)" as Router
+end box
+participant "Azure Service Bus\n(Topic)" as SB
+
+== Phase 1: Device → Middleware (AMQP 1.0 Auth & Links) ==
+Device -> Qpid: TCP/TLS connect
+Device -> Qpid: AMQP SASL (e.g., EXTERNAL/PLAIN)\nPresent device credentials (cert/token)
+Qpid --> Device: SASL outcome = OK
+Device -> Qpid: AMQP Open / Begin
+Qpid --> Device: AMQP Open / Begin (ok)
+Device -> Qpid: Attach sender link (to ingress address/topic)
+Qpid --> Device: Attach receiver link (disposition/settlement path)
+Device <-> Qpid: Flow frames (credit negotiation)
+
+== Phase 2: Middleware → Service Bus (Entra ID & AMQP Link) ==
+Router -> SBAuth: Acquire AAD token (client cred/managed identity)
+SBAuth --> Router: OAuth2 access token (aud = ServiceBus)
+Router -> SB: TCP/TLS connect
+Router -> SB: AMQP SASL OAuth2 (bearer token)
+SB --> Router: SASL outcome = OK
+Router -> SB: AMQP Open / Begin
+SB --> Router: AMQP Open / Begin (ok)
+Router -> SB: Attach sender link to Topic (e.g., sb://namespace/topic)
+SB --> Router: Attach (ok)
+Router <-> SB: Flow frames (credit)
+
+== Phase 3: Message Transfer (Device → Middleware → SB Topic) ==
+loop For each telemetry/health message
+  Device -> Qpid: TRANSFER(message)\nprops: message-id, correlation-id\napp-props: tenantId, deviceId, type(metrics|alert), content-type, ttl
+  Qpid --> Device: DISPOSITION (accepted or settled per mode)
+
+  Router -> Qpid: Receive from ingress (prefetch N)
+  Router -> SB: TRANSFER(message)\npreserve message-id & key properties for filters/dedup
+  SB --> Router: DISPOSITION (accepted)
+  Router -> Qpid: DISPOSITION (accept/settle) on success
+end
+
+== Optional: Failures & Retries ==
+alt SB send transient failure
+  Router -> SB: Retry with backoff (token refresh if 401/expired)
+  note right of Router
+    Keep message-id stable for de-dup
+    Respect TTL; avoid poison loops
+  end note
+else Router processing error
+  Router -> Qpid: Release/Reject per policy
+end
+
+== Notes ==
+note over SB
+  Use Topic Subscriptions + SQL/Correlation filters
+  (type, tenantId, deviceId) for fan-out
+end note
+@enduml
+
+
+
+
+@startuml
+title High-Level Flow: Client → Middleware → Service Bus → Device Health Service
+
+actor Client_Device as Device
+box "Middleware Service" #LightBlue
+  participant "API Gateway / Ingress" as GW
+  participant "DeviceAuthN/AuthZ Service" as Auth
+  participant "Qpid Apache Broker\n(AMQP 1.0)" as Qpid
+  participant "ServiceBusAuth\n(Entra ID / MI)" as SBAuth
+  participant "Routing Service\n(Qpid → SB Topic)" as Router
+end box
+participant "Azure Service Bus\n(Topic + Subscriptions)" as SB
+participant "Device Health Service\n(Consumer)" as DHS
+database "Health DB" as DB
+
+== Secure connect & authenticate ==
+Device -> GW: TLS/mTLS connect\nPOST /publish (payload+headers)
+activate GW
+GW -> Auth: Validate device (mTLS cert / token)\nCheck ACLs / quotas / schema
+activate Auth
+Auth --> GW: AuthZ decision (allow/deny)\nDevice profile, tenant context
+deactivate Auth
+
+alt AuthZ = deny
+  GW --> Device: 401/403 (error + reason)
+  deactivate GW
+  destroy Device
+  return
+end
+
+== Ingest to Qpid ==
+GW -> Qpid: AMQP publish (durable)\nprops: messageId, correlationId, tenantId, type, TTL
+activate Qpid
+Qpid --> GW: 202 Accepted (queued)
+deactivate GW
+
+== Bridge to Service Bus ==
+activate Router
+Router -> Qpid: AMQP consume (prefetch N)\nSettle (ack) on success path
+Qpid --> Router: Message (body + app-properties)
+
+opt Acquire SB credentials if needed
+  Router -> SBAuth: Get token (Managed Identity / Entra ID)
+  SBAuth --> Router: AAD token / SAS
+end
+
+Router -> SB: Send to Topic\nInclude headers for filtering:\n- subject/type (metrics|alert)\n- tenantId/deviceId\n- contentType\n- correlationId
+SB --> Router: 201 Created (message accepted)
+Router --> Qpid: Ack/settle message
+deactivate Router
+deactivate Qpid
+
+== Fan-out and consume ==
+SB -> DHS: Deliver message via Subscription rule\n(SQL/correlation filter match)
+activate DHS
+DHS -> DHS: Validate & parse payload\nIdempotency check (messageId)\nTransform & enrich
+DHS -> DB: Upsert device health/metrics
+DB --> DHS: OK
+DHS --> SB: Complete (ack)
+deactivate DHS
+
+== Exceptions & resilience ==
+group Retry & DLQ (examples)
+  ref over Router, SB: Transient SB send failure → retry with backoff
+  note right of Router
+    - Preserve messageId for de-dup
+    - Respect TTL; avoid poison loops
+
+
+
+  end note
+
+  alt DHS processing fails
+    DHS --> SB: Abandon/Defer\n(increment deliveryCount)
+    note right of SB
+      On maxDeliveryCount exceeded\n→ auto Dead-Letter
+    end note
+    SB -> DHS: Redelivery per policy
+  else TTL expired / maxDeliveryCount
+    SB -> SB: Move to DLQ (with reason, description)
+  end
+end
+
+== Observability ==
+Auth -[#grey]-> Router: Emit metrics/traces\n(latency, auth result, route outcome)
+Router -[#grey]-> SB: Custom dims (tenantId, type)
+DHS -[#grey]-> DB: Audit write success/failure
+
+@enduml
