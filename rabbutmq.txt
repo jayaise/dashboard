@@ -1,0 +1,23 @@
+####################################
+# MQTT TCP listener
+####################################
+mqtt.listeners.tcp.default = 1883
+
+# vhost where MQTT messages will be routed
+mqtt.vhost = /
+
+# exchange MQTT plugin publishes into
+mqtt.exchange = amq.topic
+
+####################################
+# Authentication for MQTT
+####################################
+mqtt.allow_anonymous = false
+mqtt.default_user = admin
+mqtt.default_pass = admin123
+
+####################################
+# (Optional) Web MQTT over WebSockets
+####################################
+web_mqtt.listeners.tcp.default = 15675
+web_mqtt.vhost = /
