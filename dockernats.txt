@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  nats:
+    image: nats:latest
+    container_name: nats-js
+    command: ["-js", "-c", "/etc/nats/nats.conf"]
+    ports:
+      - "4222:4222"   # NATS client
+      - "8222:8222"   # HTTP monitoring
+    volumes:
+      - D:\nats\config\nats.conf:/etc/nats/nats.conf
+      - D:\nats\data:/data
+    restart: unless-stopped
