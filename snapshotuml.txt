@@ -1,0 +1,191 @@
+@startuml
+title High-level AMQP Message Broker Architecture
+
+skinparam componentStyle rectangle
+
+package "Device / Edge" {
+  [testclient] as test
+  [aopclient] as aop
+  [financeclient] as finance
+
+  component "AMQP Library\n(Qpid Proton)" as amqpClient
+}
+
+package "Kubernetes Cluster A\n(Messaging & Ingress)" {
+  [Kong API Gateway] as kong
+  component "RabbitMQ Cluster\n(RabbitMQ Operator)" as rmq
+}
+
+package "Kubernetes Cluster B\n(Cloud Processing)" {
+  component "Message Processor\nMicroservice" as proc
+  database "Application DB" as db
+}
+
+' Connections from clients
+test -down- amqpClient
+aop -down- amqpClient
+finance -down- amqpClient
+
+amqpClient -[#blue]-> kong : AMQP over TLS\n(amqps / ws+amqp)
+kong -[#blue]-> rmq : Route AMQP\n(L7 routing, auth)
+
+' Consumer side
+proc -[#blue]-> kong : AMQP consumer connection
+kong -[#blue]-> rmq : Route AMQP to queues
+
+' Processing to DB
+proc -[#green]-> db : Insert / Update\nprocessed data
+
+@enduml
+
+=======================================================================
+@startuml
+title Device to RabbitMQ to Cloud Microservice
+
+actor Device as dev
+participant "Kong Gateway" as kong
+participant "RabbitMQ Cluster" as rmq
+participant "Cloud Microservice" as svc
+database "DB" as db
+
+dev -> kong : 1. Establish AMQP connection\n(Proton AMQP, TLS)
+kong -> rmq : 2. Forward AMQP connection
+rmq --> kong : 3. Connection established
+kong --> dev : 4. Connection OK
+
+dev -> rmq : 5. Publish AMQP message\n(exchange, routing_key)\n(via Kong)
+rmq --> rmq : 6. Route via exchange\n→ queue
+
+svc -> kong : 7. Open AMQP connection\nas consumer
+kong -> rmq : 8. Forward consumer connection
+rmq --> svc : 9. Deliver message from queue
+
+svc -> svc : 10. Process message\n(validate, transform)
+svc -> db : 11. Persist to DB
+db --> svc : 12. ACK
+
+svc -> rmq : 13. ACK message
+@enduml
+
+========================================================================
+@startuml
+title RabbitMQ Cluster Operator Architecture (CRD-Focused, No StatefulSets)
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam defaultTextAlignment center
+
+
+' ------------------ External Actors ------------------
+actor "IoT Device / Gateway" as Device
+actor "DevOps Engineer" as DevOps
+
+
+' ------------------ Kubernetes Cluster ------------------
+node "Kubernetes Cluster" as K8s {
+
+  ' ----- Control Plane -----
+  node "Kubernetes Control Plane" as ControlPlane {
+    component "API Server" as APIServer
+  }
+
+  ' ------------------ Operator + CRDs ------------------
+  package "RabbitMQ Operator Layer" as OperatorLayer {
+
+    component "RabbitMQ Cluster Operator\n(rabbitmq.com/operator)" as Operator
+
+    package "CRD Definitions" as CRDs {
+      component "CRD: RabbitmqCluster\n(rabbitmq.com/v1beta1)" as CRDCluster
+      component "CRD: RabbitmqUser\n(rabbitmq.com/v1beta1)" as CRDUser
+      component "CRD: RabbitmqPermission\n(rabbitmq.com/v1beta1)" as CRDPerm
+    }
+
+    package "Custom Resource Instances" as CRInstances {
+      component "RabbitmqCluster\nName: rabbit-prod\nreplicas: 3" as RabbitClusterCR
+      component "RabbitmqUser\nName: device-user" as RabbitUserCR
+      component "RabbitmqPermission\nvhost: /devices\npermissions: read/write" as RabbitPermCR
+    }
+  }
+
+
+  ' ------------------ Logical RabbitMQ Cluster ------------------
+  package "RabbitMQ Cluster (Logical Representation)" as RMQLogical {
+    component "RabbitMQ Virtual Cluster\n(Exchanges, Queues, Users,\nPolicies, Permissions)" as RMQCluster
+  }
+
+
+  ' ------------------ Services ------------------
+  package "RabbitMQ Services" as Svc {
+    component "Service: rabbitmq\n(ClusterIP)\nAMQP / MQTT Access" as SvcClusterIP
+    component "Service: rabbitmq-management\n(HTTP 15672)" as SvcMgmt
+  }
+
+
+  ' ------------------ Microservice ------------------
+  package "Microservices" as Apps {
+    component "Ingest Service\n(AMQP Consumer)" as IngestSvc
+    database "Device Health DB" as DB
+  }
+}
+
+
+' ------------------ Relationships ------------------
+
+' DevOps applies CRDs + custom resources
+DevOps --> APIServer : kubectl apply\nRabbitmqCluster YAML
+
+' CRDs define valid schema
+APIServer --> CRDCluster : registers CRD
+APIServer --> CRDUser
+APIServer --> CRDPerm
+
+' Custom Resources created by DevOps
+APIServer --> RabbitClusterCR : stores desired cluster\n(e.g., replicas, plugins)
+APIServer --> RabbitUserCR : stores user definition
+APIServer --> RabbitPermCR : stores permissions
+
+' Operator watches for CRDs and instances
+Operator --> APIServer : watch RabbitmqCluster /\nRabbitmqUser /\nRabbitmqPermission
+RabbitClusterCR --> Operator : desired cluster state
+RabbitUserCR --> Operator : desired user account
+RabbitPermCR --> Operator : desired permissions
+
+' Operator manages logical RabbitMQ cluster contents
+Operator --> RMQCluster : create/update.\nUsers, Permissions,\nVhosts, Exchanges, Queues
+
+' Services route to logical cluster
+SvcClusterIP --> RMQCluster : AMQP 5672 /\nMQTT 1883
+SvcMgmt --> RMQCluster : Management UI\n15672
+
+' Device connects via external LB/ClusterIP
+Device --> SvcClusterIP : publish health/metrics
+
+' Microservice consumes messages
+IngestSvc --> SvcClusterIP : AMQP consumer
+IngestSvc --> DB : insert health/status
+
+' Legend
+legend left
+== Legend ==
+CRD = Schema for custom object type:
+ - RabbitmqCluster
+ - RabbitmqUser
+ - RabbitmqPermission
+
+CR = Custom Resource (instance):
+ - Defines desired RabbitMQ cluster config
+ - Defines users/permissions
+
+Operator:
+ - Watches CRs
+ - Creates logical RabbitMQ objects
+   (vhosts, queues, users, permissions)
+ - Flags errors in CR status fields
+
+Logical RabbitMQ Cluster:
+ - No Pods/StatefulSets shown
+ - Abstract view of functionality
+endlegend
+
+@enduml
