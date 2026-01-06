@@ -1,0 +1,117 @@
+@startuml
+title Cloud-side Gateway Reachability Monitoring (AMQP Heartbeat + HTTP POST + Scheduler)
+
+skinparam shadowing false
+skinparam linetype ortho
+skinparam roundcorner 10
+
+actor "Gateway Device" as GW
+queue "RabbitMQ\n(q.heartbeat)" as RMQ
+participant "Ingestion Service\n(Heartbeat Consumer)" as ING
+participant "API Service\n(HTTP Controller)" as API
+participant "Scheduler Service\n(Every 5 min)" as SCH
+database "PostgreSQL\n(gateway_reachability_current,\ngateway_status)" as DB
+participant "Notifier\n(optional)" as NOTIF
+
+== AMQP Heartbeat path ==
+GW -> RMQ : Publish HEARTBEAT (AMQP)\n{gatewayId, timestamp}
+RMQ -> ING : Deliver message
+ING -> ING : Validate + parse
+ING -> DB : UPSERT gateway_reachability_current\nset last_amqp_seen_at=msg.timestamp,\nupdated_at=now()
+ING -> DB : (optional) INSERT reachability_event_history\nsource=AMQP, seen_at=msg.timestamp
+ING --> RMQ : ACK
+
+== HTTP POST path (new API called from device) ==
+GW -> API : POST /v1/gateways/{id}/heartbeat\n{timestamp, extra...}
+API -> API : Validate + parse
+API -> DB : UPSERT gateway_reachability_current\nset last_http_seen_at=payload.timestamp,\nupdated_at=now()
+API -> DB : (optional) INSERT reachability_event_history\nsource=HTTP, seen_at=payload.timestamp
+API --> GW : 200 OK
+
+== Scheduler evaluation (every 5 minutes) ==
+SCH -> DB : SELECT gateways where updated_at < now()-5min\n(or all gateways in batches)
+DB --> SCH : gatewayId + last_amqp_seen_at + last_http_seen_at + current status
+
+SCH -> SCH : lastSeen = max(last_amqp_seen_at, last_http_seen_at)\nif lastSeen >= now()-5min => ONLINE else OFFLINE
+
+alt lastSeen within 5 minutes
+  SCH -> DB : UPDATE gateway_status\nset reachability_status='ONLINE', updated_at=now()\nwhere gateway_id=?
+else lastSeen older than 5 minutes OR null
+  SCH -> DB : UPDATE gateway_status\nset reachability_status='OFFLINE', updated_at=now(),\nreason='Missing heartbeat'\nwhere gateway_id=?
+  opt notification
+    SCH -> NOTIF : Emit event "GATEWAY_OFFLINE"\n(gatewayId, lastSeen)
+  end
+end
+
+@enduml
+
+
+
+=======================================
+@startuml
+title DFD - Cloud Gateway Reachability Monitoring
+
+skinparam shadowing false
+skinparam linetype ortho
+skinparam roundcorner 10
+
+rectangle "External Entity:\nGateway Device" as GW
+rectangle "RabbitMQ\nq.heartbeat" as RMQ
+rectangle "Process:\nHeartbeat Ingestion Service" as P1
+rectangle "Process:\nHTTP Heartbeat API Service" as P2
+rectangle "Process:\nScheduler (5-min check)" as P3
+
+database "D1: gateway_reachability_current" as D1
+database "D2: gateway_status" as D2
+database "D3: reachability_event_history (optional)" as D3
+
+GW --> RMQ : AMQP Heartbeat
+RMQ --> P1 : Deliver heartbeat msg
+P1 --> D1 : Upsert last_amqp_seen_at
+P1 --> D3 : Insert audit event (optional)
+
+GW --> P2 : HTTP POST heartbeat
+P2 --> D1 : Upsert last_http_seen_at
+P2 --> D3 : Insert audit event (optional)
+
+P3 --> D1 : Read last_amqp_seen_at/last_http_seen_at
+P3 --> D2 : Update ONLINE/OFFLINE + reason
+
+@enduml
+
+==================================
+@startuml
+title Scheduler Flow - Determine ONLINE/OFFLINE every 5 minutes
+
+skinparam shadowing false
+skinparam linetype ortho
+skinparam roundcorner 10
+
+start
+
+:Load gateways in batches;
+repeat
+  :Read gateway_id,\n gateway_status.updated_at,\n last_amqp_seen_at,\n last_http_seen_at;
+  
+  if (gateway_status.updated_at > now()-5min ?) then (yes)
+    :Skip (recently evaluated);
+  else (no)
+    :lastSeen = max(last_amqp_seen_at, last_http_seen_at);
+    
+    if (lastSeen is not null\nAND lastSeen >= now()-5min ?) then (yes)
+      :Set reachability_status = ONLINE;
+      :reason = null;
+      :Update gateway_status.updated_at = now();
+    else (no)
+      :Set reachability_status = OFFLINE;
+      :reason = "Missing heartbeat > 5 min";
+      :Update gateway_status.updated_at = now();
+      :Optionally emit notification;
+    endif
+  endif
+
+repeat while (more gateways?) is (yes)
+stop
+@enduml
+
+===========================================
