@@ -1,0 +1,255 @@
+// ProtonWsConsumerService.java
+package com.example.amqpws;
+
+import org.apache.qpid.protonj2.client.*;
+import org.apache.qpid.protonj2.client.exceptions.ClientException;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Service;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Map;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+@Service
+public class ProtonWsConsumerService {
+
+  private final AppProperties props;
+
+  private final AtomicBoolean running = new AtomicBoolean(true);
+
+  private Client client;
+  private Connection connection;
+  private Session session;
+
+  // executors per consumer name
+  private final ConcurrentMap<String, ExecutorService> executors = new ConcurrentHashMap<>();
+
+  public ProtonWsConsumerService(AppProperties props) {
+    this.props = props;
+  }
+
+  @EventListener(ApplicationReadyEvent.class)
+  public void start() {
+    // Start async so Spring boot can finish startup
+    Thread t = new Thread(this::runMainLoop, "protonj2-ws-main");
+    t.setDaemon(true);
+    t.start();
+  }
+
+  private void runMainLoop() {
+    long delay = props.getAmqpws().getReconnect().getInitialDelayMs();
+    long maxDelay = props.getAmqpws().getReconnect().getMaxDelayMs();
+
+    while (running.get()) {
+      try {
+        connect();
+        startReceivers();
+        // Block while connected; if connection drops, exception triggers reconnect.
+        blockUntilDisconnected();
+        delay = props.getAmqpws().getReconnect().getInitialDelayMs();
+      } catch (Exception e) {
+        System.err.println("AMQP-WS loop error: " + e.getMessage());
+        safeClose();
+        sleep(delay);
+        delay = Math.min(maxDelay, delay * 2);
+      }
+    }
+  }
+
+  private void connect() throws ClientException {
+    client = Client.create();
+
+    ConnectionOptions options = new ConnectionOptions()
+        .user(props.getAmqpws().getUsername())
+        .password(props.getAmqpws().getPassword())
+        // tune timeouts if needed
+        .idleTimeout(Duration.ofSeconds(30));
+
+    // IMPORTANT:
+    // URL MUST be WS endpoint for AMQP 1.0 over WebSocket (e.g. ws://host:15675/ws).
+    // Some ProtonJ2 builds also accept "amqpws://host:port/path".
+    connection = client.connect(props.getAmqpws().getUrl(), options);
+
+    session = connection.openSession();
+    System.out.println("Connected via AMQP over WebSocket: " + props.getAmqpws().getUrl());
+  }
+
+  private void startReceivers() {
+    int credit = props.getAmqpws().getReceiver().getCredit();
+
+    for (AppProperties.ConsumerDef def : props.getConsumers()) {
+      executors.computeIfAbsent(def.getName(),
+          k -> Executors.newFixedThreadPool(def.getThreads(), r -> new Thread(r, "consumer-" + def.getName())));
+
+      // Create a receiver link per queue address
+      ReceiverOptions ro = new ReceiverOptions()
+          .creditWindow(credit); // link credit (prefetch)
+
+      Receiver receiver = session.openReceiver(def.getQueue(), ro);
+
+      // Consume messages on receiver thread pool
+      receiver.addCredit(credit);
+
+      receiver.setMessageHandler((delivery, message) -> {
+        executors.get(def.getName()).submit(() -> {
+          try {
+            // Your payload handling
+            String body = extractBodyAsString(message);
+            System.out.println("[" + def.getName() + "][" + def.getQueue() + "] " + body);
+
+            // ACK (accept)
+            delivery.accept();
+          } catch (Exception ex) {
+            System.err.println("[" + def.getName() + "] processing failed: " + ex.getMessage());
+
+            // Choose disposition:
+            // - release(): requeue-like behavior (depends on broker)
+            // - reject(): dead-letter if configured
+            // - modified(): delivery failed with flags
+            delivery.release();
+          }
+        });
+      });
+
+      System.out.println("Receiver started for " + def.getName() + " queue=" + def.getQueue());
+    }
+  }
+
+  private void blockUntilDisconnected() {
+    // Simple block. In practice you can register connection close handlers if available in your version.
+    while (running.get() && connection != null && connection.isConnected()) {
+      sleep(1000);
+    }
+    throw new RuntimeException("Disconnected");
+  }
+
+  private static String extractBodyAsString(Message<?> message) {
+    // ProtonJ2 message body types vary; simplest robust approach:
+    Object body = message.body();
+    if (body == null) return "";
+    if (body instanceof String s) return s;
+
+    // Many payloads arrive as binary/byte[] depending on sender.
+    if (body instanceof byte[] bytes) return new String(bytes, StandardCharsets.UTF_8);
+
+    // Fallback
+    return body.toString();
+  }
+
+  private void safeClose() {
+    try { if (session != null) session.close(); } catch (Exception ignored) {}
+    try { if (connection != null) connection.close(); } catch (Exception ignored) {}
+    try { if (client != null) client.close(); } catch (Exception ignored) {}
+    session = null;
+    connection = null;
+    client = null;
+  }
+
+  private static void sleep(long ms) {
+    try { Thread.sleep(ms); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+  }
+}
+
+============================================================================================
+app:
+  amqpws:
+    url: "ws://localhost:15675/ws"
+    username: "admin"
+    password: "admin123"
+    reconnect:
+      initialDelayMs: 1000
+      maxDelayMs: 15000
+    receiver:
+      credit: 50        # prefetch / link credit
+      closeOnError: false
+
+  consumers:
+    - name: "orders"
+      queue: "q.consumer.orders"
+      threads: 2
+    - name: "health"
+      queue: "q.consumer.health"
+      threads: 1
+    - name: "metrics"
+      queue: "q.consumer.metrics"
+      threads: 4
+
+========================================================
+
+// AppProperties.java
+package com.example.amqpws;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import java.util.List;
+
+@ConfigurationProperties(prefix = "app")
+public class AppProperties {
+
+  private AmqpWs amqpws;
+  private List<ConsumerDef> consumers;
+
+  public AmqpWs getAmqpws() { return amqpws; }
+  public void setAmqpws(AmqpWs amqpws) { this.amqpws = amqpws; }
+
+  public List<ConsumerDef> getConsumers() { return consumers; }
+  public void setConsumers(List<ConsumerDef> consumers) { this.consumers = consumers; }
+
+  public static class AmqpWs {
+    private String url;
+    private String username;
+    private String password;
+    private Reconnect reconnect = new Reconnect();
+    private Receiver receiver = new Receiver();
+
+    public String getUrl() { return url; }
+    public void setUrl(String url) { this.url = url; }
+
+    public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
+
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
+
+    public Reconnect getReconnect() { return reconnect; }
+    public void setReconnect(Reconnect reconnect) { this.reconnect = reconnect; }
+
+    public Receiver getReceiver() { return receiver; }
+    public void setReceiver(Receiver receiver) { this.receiver = receiver; }
+
+    public static class Reconnect {
+      private long initialDelayMs = 1000;
+      private long maxDelayMs = 15000;
+      public long getInitialDelayMs() { return initialDelayMs; }
+      public void setInitialDelayMs(long v) { this.initialDelayMs = v; }
+      public long getMaxDelayMs() { return maxDelayMs; }
+      public void setMaxDelayMs(long v) { this.maxDelayMs = v; }
+    }
+
+    public static class Receiver {
+      private int credit = 50;
+      private boolean closeOnError = false;
+      public int getCredit() { return credit; }
+      public void setCredit(int v) { this.credit = v; }
+      public boolean isCloseOnError() { return closeOnError; }
+      public void setCloseOnError(boolean v) { this.closeOnError = v; }
+    }
+  }
+
+  public static class ConsumerDef {
+    private String name;
+    private String queue;
+    private int threads = 1;
+
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+
+    public String getQueue() { return queue; }
+    public void setQueue(String queue) { this.queue = queue; }
+
+    public int getThreads() { return threads; }
+    public void setThreads(int threads) { this.threads = threads; }
+  }
+}
