@@ -1,0 +1,368 @@
+@startuml Message_Ingestion_Microservice_Class_Diagram
+
+package "Configuration Layer" <<Rectangle>> {
+    class ProtonConfig <<Configuration>> {
+        - host: String
+        - port: int
+        - username: String
+        - password: String
+        - virtualHost: String
+        - maxConnections: int
+        - connectionTimeoutMs: int
+        - idleTimeoutMs: int
+        - metricsConsumerCount: int
+        - connectivityConsumerCount: int
+        - downstreamConsumerCount: int
+        - metricsQueue: String
+        - connectivityQueue: String
+        - downstreamQueue: String
+        - receiverCreditWindow: int
+        - maxFrameSize: int
+        - maxRetryAttempts: int
+        - retryDelayMs: long
+        - retryBackoffMultiplier: double
+        - maxRetryDelayMs: long
+        - saslMechanism: String
+        + getConnectionString(): String
+    }
+}
+
+package "Connection Management" <<Rectangle>> {
+    class ProtonConnectionManager <<Component>> {
+        - config: ProtonConfig
+        - connectionPool: List<ProtonConnectionWrapper>
+        - connectionIndex: AtomicInteger
+        - lock: ReentrantLock
+        - eventLoopGroup: EventLoopGroup
+        + initialize(): void
+        + getConnection(): ProtonConnectionWrapper
+        + cleanup(): void
+        + getEventLoopGroup(): EventLoopGroup
+        - createConnection(): ProtonConnectionWrapper
+        - isConnectionValid(): boolean
+    }
+    
+    class ProtonConnectionWrapper <<Data>> {
+        - channel: Channel
+        - connection: Connection
+        - handler: ProtonConnectionHandler
+        + getChannel(): Channel
+        + getConnection(): Connection
+        + getHandler(): ProtonConnectionHandler
+    }
+    
+    class ProtonConnectionHandler <<Handler>> {
+        - config: ProtonConfig
+        - transport: Transport
+        - connection: Connection
+        - connectionLatch: CountDownLatch
+        + channelActive(ctx: ChannelHandlerContext): void
+        + channelRead(ctx: ChannelHandlerContext, msg: Object): void
+        + channelInactive(ctx: ChannelHandlerContext): void
+        + exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): void
+        + awaitConnection(timeoutMs: long): void
+        + getConnection(): Connection
+        + getTransport(): Transport
+        - processTransportWork(ctx: ChannelHandlerContext): void
+    }
+}
+
+package "Consumer Layer" <<Rectangle>> {
+    abstract class ProtonMessageReceiver<T> <<Abstract>> {
+        # connectionManager: ProtonConnectionManager
+        # config: ProtonConfig
+        # processor: MessageProcessor<T>
+        # objectMapper: ObjectMapper
+        # queueName: String
+        # messageClass: Class<T>
+        # running: boolean
+        # connectionWrapper: ProtonConnectionWrapper
+        # session: Session
+        # receiver: Receiver
+        # receiverReadyLatch: CountDownLatch
+        + run(): void
+        + stop(): void
+        - initializeReceiver(): void
+        - consumeMessages(): void
+        - processDelivery(delivery: Delivery): void
+        - waitForReceiverReady(): void
+        - extractMessageBody(message: Message): String
+        - processTransportInput(): void
+        - processTransportOutput(): void
+        - calculateRetryDelay(retryCount: int): long
+        - handleConsumptionError(e: Exception): void
+        - cleanup(): void
+    }
+    
+    class MetricsProtonReceiver <<Component>> {
+        + MetricsProtonReceiver(...)
+    }
+    
+    class ConnectivityProtonReceiver <<Component>> {
+        + ConnectivityProtonReceiver(...)
+    }
+    
+    class DownstreamProtonReceiver <<Component>> {
+        + DownstreamProtonReceiver(...)
+    }
+    
+    class ProtonConsumerManager <<Component>> {
+        - config: ProtonConfig
+        - applicationContext: ApplicationContext
+        - executorService: ExecutorService
+        - receiverFutures: List<Future<?>>
+        - receivers: List<ProtonMessageReceiver<?>>
+        + startReceivers(): void
+        + stopReceivers(): void
+    }
+}
+
+package "Service Layer" <<Rectangle>> {
+    interface MessageProcessor<T> <<Interface>> {
+        + process(message: T): void
+        + handleFailure(message: T, exception: Exception): void
+    }
+    
+    class MetricsDataService <<Service>> {
+        - repository: MetricsDataRepository
+        - auditService: MessageAuditService
+        + process(message: MetricsMessage): void
+        + handleFailure(message: MetricsMessage, exception: Exception): void
+        - validateMessage(message: MetricsMessage): void
+    }
+    
+    class ConnectivityDataService <<Service>> {
+        - repository: ConnectivityDataRepository
+        - auditService: MessageAuditService
+        + process(message: ConnectivityMessage): void
+        + handleFailure(message: ConnectivityMessage, exception: Exception): void
+        - validateMessage(message: ConnectivityMessage): void
+    }
+    
+    class DownstreamDataService <<Service>> {
+        - repository: DownstreamDataRepository
+        - auditService: MessageAuditService
+        + process(message: DownstreamMessage): void
+        + handleFailure(message: DownstreamMessage, exception: Exception): void
+        - validateMessage(message: DownstreamMessage): void
+    }
+    
+    class MessageAuditService <<Service>> {
+        - successCount: AtomicLong
+        - failureCount: AtomicLong
+        + recordSuccess(queueType: String, identifier: String): void
+        + recordFailure(queueType: String, identifier: String, error: String): void
+        + getStatistics(): Map<String, Long>
+    }
+}
+
+package "Repository Layer" <<Rectangle>> {
+    interface MetricsDataRepository <<Repository>> {
+        + findByDeviceIdAndTimestampBetween(...): List<MetricsData>
+    }
+    
+    interface ConnectivityDataRepository <<Repository>> {
+        + findByConnectionIdOrderByEventTimeDesc(...): List<ConnectivityData>
+    }
+    
+    interface DownstreamDataRepository <<Repository>> {
+        + findByTransactionId(transactionId: String): Optional<DownstreamData>
+        + findByProcessingStatus(status: ProcessingStatus): List<DownstreamData>
+    }
+}
+
+package "Domain Model" <<Rectangle>> {
+    class MetricsData <<Entity>> {
+        - id: Long
+        - deviceId: String
+        - metricName: String
+        - metricValue: Double
+        - unit: String
+        - timestamp: LocalDateTime
+        - createdAt: LocalDateTime
+        # onCreate(): void
+    }
+    
+    class ConnectivityData <<Entity>> {
+        - id: Long
+        - connectionId: String
+        - sourceSystem: String
+        - targetSystem: String
+        - status: ConnectionStatus
+        - eventTime: LocalDateTime
+        - errorMessage: String
+        - createdAt: LocalDateTime
+        # onCreate(): void
+    }
+    
+    class DownstreamData <<Entity>> {
+        - id: Long
+        - transactionId: String
+        - downstreamSystem: String
+        - payload: String
+        - processingStatus: ProcessingStatus
+        - processedTime: LocalDateTime
+        - createdAt: LocalDateTime
+        # onCreate(): void
+    }
+    
+    enum ConnectionStatus {
+        CONNECTED
+        DISCONNECTED
+        RECONNECTING
+        FAILED
+    }
+    
+    enum ProcessingStatus {
+        PENDING
+        PROCESSED
+        FAILED
+        RETRY
+    }
+}
+
+package "Message DTOs" <<Rectangle>> {
+    class MetricsMessage <<DTO>> {
+        - deviceId: String
+        - metricName: String
+        - metricValue: Double
+        - unit: String
+        - timestamp: LocalDateTime
+        + toEntity(): MetricsData
+    }
+    
+    class ConnectivityMessage <<DTO>> {
+        - connectionId: String
+        - sourceSystem: String
+        - targetSystem: String
+        - status: String
+        - eventTime: LocalDateTime
+        - errorMessage: String
+        + toEntity(): ConnectivityData
+    }
+    
+    class DownstreamMessage <<DTO>> {
+        - transactionId: String
+        - downstreamSystem: String
+        - payload: String
+        - processingStatus: String
+        - processedTime: LocalDateTime
+        + toEntity(): DownstreamData
+    }
+}
+
+package "Exception Handling" <<Rectangle>> {
+    class MessageProcessingException <<Exception>> {
+        + MessageProcessingException(message: String)
+        + MessageProcessingException(message: String, cause: Throwable)
+    }
+    
+    class ValidationException <<Exception>> {
+        + ValidationException(message: String)
+    }
+}
+
+package "Utilities" <<Rectangle>> {
+    class ThreadFactoryBuilder {
+        - nameFormat: String
+        - daemon: boolean
+        + setNameFormat(nameFormat: String): ThreadFactoryBuilder
+        + setDaemon(daemon: boolean): ThreadFactoryBuilder
+        + build(): ThreadFactory
+    }
+}
+
+' Relationships - Configuration
+ProtonConfig "1" -- "1" ProtonConnectionManager : configures
+
+' Relationships - Connection Management
+ProtonConnectionManager "1" *-- "many" ProtonConnectionWrapper : manages
+ProtonConnectionManager "1" -- "1" ProtonConnectionHandler : creates
+ProtonConnectionWrapper "1" o-- "1" ProtonConnectionHandler : contains
+
+' Relationships - Consumer Layer
+ProtonMessageReceiver <|-- MetricsProtonReceiver : extends
+ProtonMessageReceiver <|-- ConnectivityProtonReceiver : extends
+ProtonMessageReceiver <|-- DownstreamProtonReceiver : extends
+
+ProtonMessageReceiver "many" --> "1" ProtonConnectionManager : uses
+ProtonMessageReceiver "many" --> "1" MessageProcessor : uses
+
+ProtonConsumerManager "1" --> "many" ProtonMessageReceiver : manages
+ProtonConsumerManager "1" --> "1" ProtonConfig : uses
+
+' Relationships - Service Layer
+MessageProcessor <|.. MetricsDataService : implements
+MessageProcessor <|.. ConnectivityDataService : implements
+MessageProcessor <|.. DownstreamDataService : implements
+
+MetricsProtonReceiver "1" --> "1" MetricsDataService : uses
+ConnectivityProtonReceiver "1" --> "1" ConnectivityDataService : uses
+DownstreamProtonReceiver "1" --> "1" DownstreamDataService : uses
+
+MetricsDataService "1" --> "1" MetricsDataRepository : uses
+ConnectivityDataService "1" --> "1" ConnectivityDataRepository : uses
+DownstreamDataService "1" --> "1" DownstreamDataRepository : uses
+
+MetricsDataService "1" --> "1" MessageAuditService : uses
+ConnectivityDataService "1" --> "1" MessageAuditService : uses
+DownstreamDataService "1" --> "1" MessageAuditService : uses
+
+' Relationships - Repository to Entity
+MetricsDataRepository "1" --> "many" MetricsData : persists
+ConnectivityDataRepository "1" --> "many" ConnectivityData : persists
+DownstreamDataRepository "1" --> "many" DownstreamData : persists
+
+' Relationships - DTOs to Entities
+MetricsMessage ..> MetricsData : creates
+ConnectivityMessage ..> ConnectivityData : creates
+DownstreamMessage ..> DownstreamData : creates
+
+' Relationships - DTOs to Services
+MetricsDataService ..> MetricsMessage : processes
+ConnectivityDataService ..> ConnectivityMessage : processes
+DownstreamDataService ..> DownstreamMessage : processes
+
+' Relationships - Enums
+ConnectivityData "1" --> "1" ConnectionStatus : uses
+DownstreamData "1" --> "1" ProcessingStatus : uses
+
+' Relationships - Exceptions
+MetricsDataService ..> MessageProcessingException : throws
+MetricsDataService ..> ValidationException : throws
+ConnectivityDataService ..> MessageProcessingException : throws
+ConnectivityDataService ..> ValidationException : throws
+DownstreamDataService ..> MessageProcessingException : throws
+DownstreamDataService ..> ValidationException : throws
+
+' Relationships - Utilities
+ProtonConsumerManager ..> ThreadFactoryBuilder : uses
+
+note right of ProtonConnectionManager
+  Manages pool of AMQP connections
+  Uses Netty EventLoopGroup for async I/O
+  Validates and recreates connections
+end note
+
+note right of ProtonMessageReceiver
+  Base class for all receivers
+  Handles AMQP message consumption
+  Implements retry logic with exponential backoff
+  Processes transport input/output
+  Manages receiver credit flow
+end note
+
+note right of ProtonConnectionHandler
+  Netty handler for AMQP protocol
+  Processes SASL authentication
+  Manages transport and connection lifecycle
+  Handles frame encoding/decoding
+end note
+
+note bottom of MessageProcessor
+  Strategy pattern for message processing
+  Implemented by all service classes
+  Enables retry and error handling
+end note
+
+@enduml
