@@ -1,0 +1,110 @@
+1. Build validation
+
+Goal: ensure the scheduler-triggered snapshot workflow always produces a correct deployable image.
+
+Test areas:
+
+Job scheduler triggers the workflow at the expected time
+Snapshot workflow starts only once per schedule
+Source code is pulled from the correct GitHub main branch
+Build compiles successfully
+Unit tests run
+Static code checks / lint / quality gates run
+Docker image is created successfully
+Image tag format is correct
+Image is pushed to registry
+Registry stores the image with the expected metadata
+
+Example checks:
+
+Did the scheduler invoke the right workflow?
+Did the build use the correct branch and commit SHA?
+Was the image tag generated correctly?
+Is the pushed image pullable?
+2. Deployment orchestration validation
+
+Goal: ensure Harness automatically resolves the right deployment inputs without manual entry.
+
+Test areas:
+
+Harness auto-selects the correct component
+Harness resolves GitHub main branch correctly
+Harness loads the correct project configuration
+Harness picks the latest valid image tag
+Harness selects the correct dev environment
+Harness selects the right target clusters
+Deployment starts automatically with no manual input
+
+Critical validations:
+
+“Latest image tag” must mean latest successful and approved build, not just latest pushed tag
+Component mapping must not point to the wrong service
+Branch selection must always be main, unless overridden by config
+Dev environment should map only to allowed dev clusters
+3. Application deployment validation
+
+Goal: ensure the selected image is correctly deployed into the dev clusters.
+
+Test areas:
+
+Harness connects successfully to all target clusters
+Kubernetes/OpenShift manifests / Helm charts render correctly
+Correct namespace/project is targeted
+Pods start successfully
+Image pull succeeds from registry
+Health/readiness/liveness probes pass
+Rollout completes successfully on all clusters
+Service/route/ingress is updated
+Deployment version matches the selected image tag
+
+Cluster-level checks:
+
+Pod status = Running
+No CrashLoopBackOff
+Replica count matches desired state
+Route/service endpoints are healthy
+Logs show clean startup
+4. End-to-end validation
+
+Goal: validate the full chain from scheduler trigger to live deployment.
+
+End-to-end scenarios:
+
+Scheduled build succeeds and auto-deploys to all 4 dev clusters
+New image tag is automatically picked by Harness
+Deployed application version matches the built image tag
+Application is reachable after deployment
+Smoke test passes in each dev cluster
+If build fails, deployment must not start
+If image push fails, Harness must not deploy stale image
+If one cluster fails, failure should be reported clearly
+
+This is the most important business-flow test.
+
+5. Negative and failure-path testing
+
+Goal: verify system behavior when something goes wrong.
+
+Important negative cases:
+
+Scheduler does not trigger
+Build fails during compile
+Unit tests fail
+Docker image creation fails
+Registry push fails
+Latest image tag is missing or corrupted
+Harness cannot load project config
+Harness cannot connect to GitHub
+Harness picks wrong branch
+Harness cannot reach one or more dev clusters
+Deployment succeeds in 3 clusters and fails in 1
+Readiness probes fail after deployment
+Wrong environment gets selected
+Rollback fails
+
+You should explicitly test:
+
+no deployment on failed build
+no deployment on missing image
+no deployment on invalid config
+correct alerting/logging on every
