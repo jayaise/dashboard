@@ -1,0 +1,48 @@
+@startuml
+actor "Job Scheduler" as Scheduler
+participant "Snapshot Build Workflow" as Build
+participant "Docker Registry" as Registry
+participant "Harness Tool" as Harness
+participant "GitHub Main Branch" as GitHub
+participant "Project Configurations" as Config
+participant "Dev Environment" as DevEnv
+participant "Dev Cluster 1" as C1
+participant "Dev Cluster 2" as C2
+participant "Dev Cluster 3" as C3
+participant "Dev Cluster 4" as C4
+
+Scheduler -> Build : Trigger snapshot workflow
+Build -> Build : Compile source code
+Build -> Build : Run validations / tests
+
+alt Build successful
+    Build -> Registry : Create Docker image
+    Build -> Registry : Assign / push image tag
+    Registry --> Harness : Latest image tag available
+
+    Harness -> Harness : Auto-select component
+    Harness -> GitHub : Auto-select main branch
+    GitHub --> Harness : Main branch details
+    Harness -> Config : Load project configurations
+    Config --> Harness : Configuration details
+    Harness -> Registry : Auto-pick latest image tag
+    Registry --> Harness : Return latest image tag
+    Harness -> DevEnv : Auto-select Dev environment
+    DevEnv --> Harness : Environment details
+
+    Harness -> C1 : Deploy application
+    Harness -> C2 : Deploy application
+    Harness -> C3 : Deploy application
+    Harness -> C4 : Deploy application
+
+    C1 --> Harness : Deployment status
+    C2 --> Harness : Deployment status
+    C3 --> Harness : Deployment status
+    C4 --> Harness : Deployment status
+
+    Harness -> Harness : Verify rollout / health checks
+    Harness --> Scheduler : Deployment completed status
+else Build failed
+    Build --> Scheduler : Build failed notification
+end
+@enduml
