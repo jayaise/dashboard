@@ -1,0 +1,40 @@
+@startuml
+actor Developer
+actor User
+participant "Git Repository / PR" as Git
+participant "Snapshot Build Workflow" as CI
+participant "Docker Registry" as Registry
+participant "Harness Pipeline" as Harness
+participant "Dev Environment" as DevEnv
+participant "Dev Cluster 1" as C1
+participant "Dev Cluster 2" as C2
+participant "Dev Cluster 3" as C3
+participant "Dev Cluster 4" as C4
+
+Developer -> Git : Commit / Merge PR
+Git -> CI : Trigger snapshot workflow
+CI -> CI : Build code
+CI -> CI : Run tests / validations
+
+alt Build success
+    CI -> Registry : Build Docker image
+    CI -> Registry : Push image with tag
+    User -> Harness : Login
+    User -> Harness : Select pipeline
+    User -> Harness : Select component
+    User -> Harness : Enter Docker image tag
+    User -> Harness : Select Dev environment
+    User -> Harness : Select 4 Dev clusters
+    User -> Harness : Trigger deployment
+    Harness -> Registry : Pull selected image
+    Harness -> DevEnv : Resolve environment/infrastructure
+    Harness -> C1 : Deploy
+    Harness -> C2 : Deploy
+    Harness -> C3 : Deploy
+    Harness -> C4 : Deploy
+    Harness -> Harness : Verify rollout / health checks
+    Harness --> User : Deployment result
+else Build failure
+    CI --> Developer : Build failed notification
+end
+@enduml
