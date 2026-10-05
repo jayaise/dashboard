@@ -1,0 +1,48 @@
+Authentication:
+
+The driver shall establish secure communication with the OnGuard OpenAccess service using HTTPS and supported OpenAccess authentication mechanisms. OpenAccess serves as the official integration interface into OnGuard and provides access to access-control data, hardware events, software events, and cardholder-related information. 
+
+The open-access REST API depended primarily on the communication server, authentication server, and open-access service. The API reference documented session management, authentication and logout, session-detail retrieval, and required formats such as date formatting
+
+The authentication response included separate token-expiration and password-expiration values. The default token lifetime was 8 hours and could be changed, such as to 1 hour, through a settings API; the password expiration was approximately 90 days and could be extended to as much as 2 years through the password-policy settings API
+
+The open-access APIs used UTC-based date and time values, and API version parameter and how versioning compared with the version maintained for each Niagara pipeline
+
+The token’s default lifetime was 8 hours and that changing token settings required a separate API call
+
+The open-access REST API could retrieve panel, reader, and door lists and their online/offline status, while access events such as “access denied” and “access granted” required event subscriptions rather than status polling
+
+
+Event Subscription
+
+The driver shall subscribe to approved OnGuard event streams and receive real-time event updates through OpenAccess event subscription mechanisms and Web Event Bridge services. OpenAccess supports durable and transient event subscriptions for external integrations.
+
+Supported event categories include:
+
+Access Granted / Access Denied
+
+Door state events
+
+Occupancy events
+
+Alarm events
+
+Device status events
+
+Schedule events
+
+Threat or security-mode changes
+
+Personnel and credential events
+
+Events shall be normalized into a Niagara-compatible event model before publication into the Niagara station. The OpenAccess event architecture supports hardware events, software events, status events, and alarm-related events.
+
+Event Structure
+
+The event model used a business event class as the first classification, distinguishing hardware events from software events, and included an event source name as an additional input
+
+The event type and event subtype served as the primary identifiers for distinguishing events with different structures, such as communication loss and access denied. These identifiers were treated as primary-key metadata in the Vanguard database and could also be maintained in Niagara, although their values could vary between software versions
+
+For the access-denied example, the event subtype value was 65, which identified the event as access denied. 
+
+Identified common event attributes—controller ID, device ID, event subtype, event type, and event source name—and can be representing them in a basic base class.
