@@ -1,0 +1,183 @@
+<dependencies>
+    <dependency>
+        <groupId>com.microsoft.signalr</groupId>
+        <artifactId>signalr</artifactId>
+        <version>10.0.0</version>
+    </dependency>
+
+    <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>2.17.2</version>
+    </dependency>
+</dependencies>
+
+
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+
+public class OnGuardRestClient {
+
+    private final HttpClient httpClient;
+    private final String baseUrl;
+    private volatile String accessToken;
+
+    public OnGuardRestClient(String baseUrl) {
+        this.baseUrl = baseUrl.replaceAll("/+$", "");
+
+        this.httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .build();
+    }
+
+    public void setAccessToken(String token) {
+        this.accessToken = token;
+    }
+
+    public String get(String apiPath) throws Exception {
+
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + apiPath))
+            .timeout(Duration.ofSeconds(30))
+            .header("Accept", "application/json")
+            .GET();
+
+        if (accessToken != null) {
+            builder.header(
+                "Authorization", "Bearer " + accessToken
+            );
+        }
+
+        HttpResponse<String> response =
+            httpClient.send(
+                builder.build(),
+                HttpResponse.BodyHandlers.ofString()
+            );
+
+        if (response.statusCode() == 401) {
+            throw new SecurityException(
+                "OnGuard authentication expired"
+            );
+        }
+
+        if (response.statusCode() < 200 ||
+            response.statusCode() >= 300) {
+
+            throw new IllegalStateException(
+                "OpenAccess HTTP status: "
+                + response.statusCode()
+            );
+        }
+
+        return response.body();
+    }
+}
+
+
+
+import com.microsoft.signalr.HubConnection;
+import com.microsoft.signalr.HubConnectionBuilder;
+
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+
+public class OnGuardSignalRClient {
+
+    private final HubConnection hubConnection;
+
+    private final BlockingQueue<String> eventQueue =
+        new LinkedBlockingQueue<>(10000);
+
+    public OnGuardSignalRClient(String hubUrl) {
+
+        hubConnection = HubConnectionBuilder
+            .create(hubUrl)
+            .build();
+
+        hubConnection.on(
+            "ReceiveEvent",
+            event -> {
+                boolean accepted = eventQueue.offer(event);
+
+                if (!accepted) {
+                    System.err.println(
+                        "OnGuard event queue full"
+                    );
+                }
+            },
+            String.class
+        );
+
+        hubConnection.onClosed(error -> {
+            System.err.println(
+                "SignalR connection closed: " + error
+            );
+            // Notify connection supervisor to reconnect.
+        });
+    }
+
+    public void connect() {
+        hubConnection.start().blockingAwait();
+        System.out.println("SignalR connected");
+    }
+
+    public String takeEvent()
+        throws InterruptedException {
+
+        return eventQueue.take();
+    }
+
+    public void disconnect() {
+        hubConnection.stop().blockingAwait();
+    }
+}
+
+
+
+public class OnGuardApplication {
+
+    public static void main(String[] args)
+        throws Exception {
+
+        String restBaseUrl =
+            "https://onguard.example.com";
+
+        String signalRHubUrl =
+            "https://onguard.example.com/eventHub";
+
+        OnGuardRestClient restClient =
+            new OnGuardRestClient(restBaseUrl);
+
+        // Supply a token obtained through the
+        // actual OpenAccess authentication workflow.
+        restClient.setAccessToken(
+            System.getenv("ONGUARD_ACCESS_TOKEN")
+        );
+
+        // Replace with an endpoint documented
+        // for your OpenAccess version.
+        String inventory =
+            restClient.get("/YOUR_INVENTORY_ENDPOINT");
+
+        System.out.println(inventory);
+
+        OnGuardSignalRClient signalRClient =
+            new OnGuardSignalRClient(signalRHubUrl);
+
+        signalRClient.connect();
+
+        while (!Thread.currentThread().isInterrupted()) {
+            String event = signalRClient.takeEvent();
+
+            System.out.println(
+                "Processing event: " + event
+            );
+
+            // Normalize and route to Niagara panel.
+        }
+    }
+}
