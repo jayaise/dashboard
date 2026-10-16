@@ -1,0 +1,235 @@
+
+import okhttp3.*;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import java.io.IOException;
+import java.time.Duration;
+
+public class OnGuardHttpClient implements AutoCloseable {
+
+    private final OkHttpClient httpClient;
+    private final String baseUrl;
+    private String sessionToken;
+
+    private static final MediaType JSON =
+        MediaType.get("application/json; charset=utf-8");
+
+    public OnGuardHttpClient(String baseUrl) {
+
+        this.baseUrl = baseUrl.endsWith("/")
+            ? baseUrl
+            : baseUrl + "/";
+
+        this.httpClient = new OkHttpClient.Builder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .readTimeout(Duration.ofSeconds(30))
+            .writeTimeout(Duration.ofSeconds(30))
+            .retryOnConnectionFailure(true)
+            .build();
+    }
+
+    public void login(
+        String loginEndpoint,
+        String username,
+        String password,
+        String applicationId,
+        String directoryId
+    ) throws IOException {
+
+        JsonObject requestBody = new JsonObject();
+
+        // Example fields. Adapt to the actual
+        // OpenAccess authentication contract.
+        requestBody.addProperty("username", username);
+        requestBody.addProperty("password", password);
+        requestBody.addProperty("applicationId", applicationId);
+        requestBody.addProperty("directoryId", directoryId);
+
+        Request request = new Request.Builder()
+            .url(resolveUrl(loginEndpoint))
+            .post(RequestBody.create(
+                requestBody.toString(), JSON))
+            .build();
+
+        try (Response response =
+                 httpClient.newCall(request).execute()) {
+
+            String responseBody = readBody(response);
+
+            if (!response.isSuccessful()) {
+                throw new IOException(
+                    "OnGuard authentication failed. HTTP "
+                    + response.code());
+            }
+
+            // Example token extraction.
+            // Confirm the actual response schema.
+            JsonObject json = JsonParser
+                .parseString(responseBody)
+                .getAsJsonObject();
+
+            if (!json.has("sessionToken")
+                    || json.get("sessionToken").isJsonNull()) {
+                throw new IOException(
+                    "No sessionToken in authentication response");
+            }
+
+            sessionToken =
+                json.get("sessionToken").getAsString();
+
+            System.out.println(
+                "OnGuard authentication successful");
+        }
+    }
+
+    public String get(String endpoint) throws IOException {
+
+        Request request = authenticatedBuilder(endpoint)
+            .get()
+            .build();
+
+        return execute(request);
+    }
+
+    public String post(
+        String endpoint,
+        JsonObject payload
+    ) throws IOException {
+
+        Request request = authenticatedBuilder(endpoint)
+            .post(RequestBody.create(
+                payload.toString(), JSON))
+            .build();
+
+        return execute(request);
+    }
+
+    private Request.Builder authenticatedBuilder(
+        String endpoint
+    ) {
+
+        if (sessionToken == null || sessionToken.isBlank()) {
+            throw new IllegalStateException(
+                "Authenticate before making API requests");
+        }
+
+        return new Request.Builder()
+            .url(resolveUrl(endpoint))
+            // Example only: confirm whether OnGuard
+            // expects Authorization, cookie, or
+            // a custom session header.
+            .header(
+                "Authorization",
+                "Bearer " + sessionToken
+            )
+            .header("Accept", "application/json");
+    }
+
+    private String execute(Request request)
+        throws IOException {
+
+        try (Response response =
+                 httpClient.newCall(request).execute()) {
+
+            String body = readBody(response);
+
+            if (!response.isSuccessful()) {
+                throw new IOException(
+                    "OnGuard request failed. HTTP "
+                    + response.code());
+            }
+
+            return body;
+        }
+    }
+
+    private String resolveUrl(String endpoint) {
+
+        if (endpoint.startsWith("/")
+                || endpoint.contains("://")) {
+            throw new IllegalArgumentException(
+                "Provide a relative API endpoint");
+        }
+
+        HttpUrl base = HttpUrl.get(baseUrl);
+        HttpUrl resolved = base.resolve(endpoint);
+
+        if (resolved == null
+                || !resolved.encodedPath()
+                    .startsWith(base.encodedPath())) {
+            throw new IllegalArgumentException(
+                "Invalid API endpoint");
+        }
+
+        return resolved.toString();
+    }
+
+    private static String readBody(Response response)
+        throws IOException {
+
+        return response.body() == null
+            ? ""
+            : response.body().string();
+    }
+
+    public String getSessionToken() {
+        return sessionToken;
+    }
+
+    @Override
+    public void close() {
+
+        sessionToken = null;
+
+        httpClient.dispatcher().executorService().shutdown();
+        httpClient.connectionPool().evictAll();
+    }
+}
+
+
+public class OnGuardApplication {
+
+    public static void main(String[] args) {
+
+        String baseUrl =
+            "https://onguard.example.com/api/access/onguard/openaccess/";
+
+        String username = System.getenv("ONGUARD_USERNAME");
+        String password = System.getenv("ONGUARD_PASSWORD");
+        String applicationId =
+            System.getenv("ONGUARD_APPLICATION_ID");
+        String directoryId =
+            System.getenv("ONGUARD_DIRECTORY_ID");
+
+        // Replace with the actual authentication route.
+        String loginEndpoint = "YOUR_LOGIN_ENDPOINT";
+
+        try (OnGuardHttpClient client =
+                 new OnGuardHttpClient(baseUrl)) {
+
+            client.login(
+                loginEndpoint,
+                username,
+                password,
+                applicationId,
+                directoryId
+            );
+
+            System.out.println("Connected to OnGuard");
+
+            // Replace with a documented inventory route.
+            String inventory = client.get(
+                "YOUR_INVENTORY_ENDPOINT"
+            );
+
+            System.out.println(inventory);
+
+        } catch (Exception e) {
+
+            System.err.println(
+                "OnGuard connection failed: "
+                + e.getMessage());
+        }
+    }
+}
