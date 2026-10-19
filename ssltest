@@ -1,0 +1,148 @@
+import java.io.*;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
+import java.util.HashMap;
+import java.util.Map;
+import javax.net.ssl.*;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonParser;
+
+import microsoft.aspnet.signalr.client.Credentials;
+import microsoft.aspnet.signalr.client.LogLevel;
+import microsoft.aspnet.signalr.client.Logger;
+import microsoft.aspnet.signalr.client.http.Request;
+import microsoft.aspnet.signalr.client.hubs.HubConnection;
+import microsoft.aspnet.signalr.client.hubs.HubProxy;
+import microsoft.aspnet.signalr.client.transport.ServerSentEventsTransport;
+
+public class WebEventSubscriber {
+
+    // ---- Configuration: replace with your values ----
+    private static final String HOST         = "onguard-server";
+    private static final int    PORT         = 8080;
+    private static final String APP_ID       = "<Application-Id>";
+    private static final String USER         = "<user>";
+    private static final String PASSWORD     = "<password>";
+    private static final String DIRECTORY_ID = "<directory_id>";
+    private static final String HUB_NAME     = "<HubName>";   // from Web Event Bridge docs
+    // Base URL passed to HubConnection. "/signalr" is appended automatically (see note below).
+    private static final String SIGNALR_BASE = "https://" + HOST + ":" + PORT + "/<bridge-base-path>";
+
+    private HubConnection connection;
+    private HubProxy proxy;
+
+    // ------------------------------------------------------------------
+    // 1. Disable certificate + hostname validation (DEV/TEST ONLY)
+    // ------------------------------------------------------------------
+    static void disableSslValidation() throws Exception {
+        TrustManager[] trustAll = new TrustManager[] {
+            new X509TrustManager() {
+                public void checkClientTrusted(X509Certificate[] c, String a) {}
+                public void checkServerTrusted(X509Certificate[] c, String a) {}
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            }
+        };
+        SSLContext sc = SSLContext.getInstance("TLS");
+        sc.init(null, trustAll, new SecureRandom());
+
+        // Used by HttpsURLConnection (REST login, negotiate, SSE, long polling)
+        HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+        HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
+
+        // Used by libraries that call SSLContext.getDefault() (e.g. some WebSocket clients)
+        SSLContext.setDefault(sc);
+    }
+
+    // ------------------------------------------------------------------
+    // 2. REST login -> session_token (uses HttpsURLConnection, so it obeys the bypass)
+    // ------------------------------------------------------------------
+    static String login() throws Exception {
+        URL url = new URL("https://" + HOST + ":" + PORT
+                + "/api/access/onguard/openaccess/authentication?version=1.0");
+        HttpsURLConnection con = (HttpsURLConnection) url.openConnection();
+        con.setRequestMethod("POST");
+        con.setRequestProperty("Content-Type", "application/json");
+        con.setRequestProperty("Application-Id", APP_ID);
+        con.setDoOutput(true);
+
+        Map<String, String> body = new HashMap<>();
+        body.put("user_name", USER);
+        body.put("password", PASSWORD);
+        body.put("directory_id", DIRECTORY_ID);
+        try (OutputStream os = con.getOutputStream()) {
+            os.write(new Gson().toJson(body).getBytes(StandardCharsets.UTF_8));
+        }
+
+        int code = con.getResponseCode();
+        InputStream is = (code >= 200 && code < 300) ? con.getInputStream() : con.getErrorStream();
+        String resp;
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line);
+            resp = sb.toString();
+        }
+        if (code != 200) throw new RuntimeException("Login failed (" + code + "): " + resp);
+
+        return JsonParser.parseString(resp).getAsJsonObject().get("session_token").getAsString();
+    }
+
+    // ------------------------------------------------------------------
+    // 3. SignalR connection + handlers
+    // ------------------------------------------------------------------
+    public HubProxy getEventBridgeProxy(final String sessionToken) throws Exception {
+        if (connection == null) {
+            connection = new HubConnection(SIGNALR_BASE);
+
+            connection.setCredentials(new Credentials() {
+                @Override
+                public void prepareRequest(Request request) {
+                    request.addHeader("Application-Id", APP_ID);
+                    request.addHeader("Session-Token", sessionToken);
+                }
+            });
+
+            connection.error(t -> System.err.println("SignalR error: " + t));
+            connection.closed(() -> System.out.println("SignalR connection closed"));
+
+            proxy = connection.createHubProxy(HUB_NAME);
+
+            proxy.on("OnBusinessEventReceived",
+                    (Map evt) -> System.out.println("Business event: " + evt), Map.class);
+            proxy.on("OnExceptionRaised",
+                    (String ex) -> System.err.println("Exception raised: " + ex), String.class);
+            proxy.on("OnManagementEvent",
+                    (String msg) -> System.out.println("Management event: " + msg), String.class);
+            proxy.on("OnConnectionToMessageBusEstablished",
+                    () -> System.out.println("Message bus connected"));
+            proxy.on("OnConnectionToMessageBusLost",
+                    () -> System.out.println("Message bus lost"));
+
+            // SSE transport goes through HttpsURLConnection, so the trust-all setup applies.
+            // (The default WebSocket transport may not honor it; see notes.)
+            connection.start(new ServerSentEventsTransport(connection.getLogger())).get();
+        }
+        return proxy;
+    }
+
+    public void startReceiving(String sessionToken) throws Exception {
+        Map<String, Object> connectionInfo = new HashMap<>();   // fill per Web Event Bridge docs
+        Map<String, Object> subscription   = new HashMap<>();   // fill per Web Event Bridge docs
+        getEventBridgeProxy(sessionToken)
+                .invoke("CreateSubscription", connectionInfo, subscription)
+                .get();
+    }
+
+    // ------------------------------------------------------------------
+    public static void main(String[] args) throws Exception {
+        disableSslValidation();                 // must run before any network call
+        String token = login();
+        WebEventSubscriber sub = new WebEventSubscriber();
+        sub.startReceiving(token);
+        System.out.println("Subscribed. Waiting for events...");
+        Thread.currentThread().join();          // keep the app alive
+    }
+}
