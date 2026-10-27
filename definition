@@ -1,0 +1,31 @@
+Phase 0: Login
+
+The client first proves who it is to OnGuard using a username, password and application ID. OnGuard replies with a session token, which is the client’s proof of identity for everything that follows. This step happens before SignalR is involved at all.
+
+Phase 1: Negotiate
+
+The client asks the server to prepare a new SignalR connection. The server answers with a connection token and the timing rules for the session, such as how long it waits before treating the client as gone. No data flows yet. This step only sets up the connection.
+
+Phase 2: Connect
+
+The client opens the actual channel that messages will travel over, using the connection token from the previous step. With WebSocket this is one two-way socket. With SSE it is a long-lived stream from the server. The server confirms the channel is ready by sending an initialization message.
+
+Phase 3: Start
+
+The client tells the server that the channel is ready and setup is complete. The server confirms, and the connection is now officially started. From this point the client can send and receive hub messages.
+
+Phase 4: Subscribe
+
+The client calls the Event Bridge hub and asks it to create a subscription, passing the session token and a description of the events it wants. The server replies with success or an error. Until this succeeds, the server sends no business events.
+
+Phase 5: Receive
+
+The server pushes events and notices to the client as they happen, and the client passes each one to the matching handler. Besides business events, it may deliver management messages, error reports and status changes about the bridge’s own message broker. This phase runs continuously until the connection ends.
+
+Phase 6: Heartbeat
+
+The client regularly signals that it is still there, both through the connection’s built-in keep-alive messages and through an OnGuard heartbeat call. This lets each side detect a dead or stalled connection quickly. It also keeps the subscription from being treated as abandoned.
+
+Phase 7: Reconnect
+
+If the connection drops, the client first tries to resume it using the last message position it saw. If that fails or the session has expired, it starts over from login and subscribes again. A deliberate shutdown ends the connection cleanly so the server can release it.
